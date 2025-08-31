@@ -1,0 +1,29 @@
+version: "3.9"
+
+services:
+  unity-server:
+    build:
+      context: .
+      dockerfile: dockerfile
+    ports:
+      - "7777:7777/tcp"
+      - "7777:7777/udp"
+    container_name: unity-server
+    networks:
+      - mssrpg-net
+
+  api-server:
+    build:
+      context: ./ApiServer
+      dockerfile: Dockerfile
+    ports:
+      - "5027:80"
+    environment:
+      - DOTNET_ENVIRONMENT=Development
+    container_name: api-server
+    networks:
+      - mssrpg-net
+
+networks:
+  mssrpg-net:
+    driver: bridge
