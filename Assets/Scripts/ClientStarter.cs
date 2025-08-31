@@ -2,10 +2,14 @@ using UnityEngine;
 using Unity.Netcode;
 using Unity.Netcode.Transports.UTP;
 
+// 타이틀 화면에서는 아직 통신을 시작하지 않기 때문에, 게임씬에서 사용.
 public class ClientStarter : MonoBehaviour
 {
     [SerializeField] private string serverIpAddress = "127.0.0.1";
     [SerializeField] private ushort serverPort = 7777;
+
+    // 타이틀화면을 거치지 않고, 바로 게임화면에서 시작하면 오프라인 모드로 실행됨.
+    public static bool IsOfflineMode = true;
 
     public static ulong MyClientId { get; private set; } = 0;
 
@@ -14,6 +18,12 @@ public class ClientStarter : MonoBehaviour
         if (Application.isBatchMode)
         {
             Destroy(this);
+            return;
+        }
+
+        if (IsOfflineMode)
+        {
+            SetupAsOfflineMode();
             return;
         }
 
@@ -36,6 +46,25 @@ public class ClientStarter : MonoBehaviour
         if (!success)
         {
             Debug.LogError("[CLIENT] 클라이언트 시작 요청 실패. NetworkManager 설정을 확인하세요.");
+        }
+
+        Destroy(this);
+    }
+
+    private void SetupAsOfflineMode()
+    {
+        Debug.Log("[OFFLINE] 오프라인 모드로 시작합니다. 로컬 호스트 실행.");
+
+        // 클라이언트가 아닌 호스트로 시작
+        var success = NetworkManager.Singleton.StartHost();
+        if (success)
+        {
+            MyClientId = NetworkManager.Singleton.LocalClientId;
+            Debug.Log($"[OFFLINE] 호스트 시작 성공! 내 클라이언트 ID: {MyClientId}");
+        }
+        else
+        {
+            Debug.LogError("[OFFLINE] 호스트 시작 실패! NetworkManager 설정을 확인하세요.");
         }
 
         Destroy(this);
