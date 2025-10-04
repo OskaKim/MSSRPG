@@ -1,9 +1,12 @@
+using Character;
 using Data.Network;
+using Helper.System;
 using Settings;
 using UI.Player;
 using Unity.Netcode;
+using Unity.Netcode.Components;
 using UnityEngine;
-using UnityEngine.InputSystem;
+using R3;
 
 namespace Player
 {
@@ -11,7 +14,8 @@ namespace Player
     {
         Idle,
         Walk,
-        Run
+        Run,
+        Attack
     }
 
     [RequireComponent(typeof(PlayerNetworkData))]
@@ -20,16 +24,20 @@ namespace Player
         private static readonly int AnimationX = Animator.StringToHash("X");
         private static readonly int AnimationY = Animator.StringToHash("Y");
         private static readonly int AnimationMoving = Animator.StringToHash("Moving");
+        private static readonly int AnimationAttackTrigger = Animator.StringToHash("Attack");
 
         [SerializeField] private float walkSpeed = 1f;
         [SerializeField] private float runSpeed = 2f;
         [SerializeField] private PlayerInfoView playerInfoViewPrefab;
-        [SerializeField] private Animator animator;
+        [SerializeField] private NetworkAnimator networkAnimator;
+        [SerializeField] private CharacterAnimationView CharacterAnimationView;
 
         private readonly NetworkVariable<PlayerState> _currentState = new(PlayerState.Idle);
+
         private PlayerInfoView _playerInfoView;
         private PlayerInputActions _actions;
         private Vector3 _previousPosition = Vector3.zero;
+        private PlayerAttackPerformer _attackPerformer = new();
 
         private void Awake()
         {
@@ -38,6 +46,11 @@ namespace Player
 
             // 캐릭터 생성 직후엔 아래를 본 상태로 설정.
             DirectionAnimationSetAs(0f, -1f);
+
+            CharacterAnimationView
+                .OnAnimationFinishedAsObservable
+                .Subscribe(_ => OnAttackAnimationFinished())
+                .AddTo(this);
         }
 
         public override void OnNetworkSpawn()
@@ -64,6 +77,29 @@ namespace Player
             if (!IsOwner)
             {
                 ApplyDirectionToAnimation();
+            }
+
+            if (_currentState.Value == PlayerState.Attack)
+            {
+                // 공격 모션 재생중.
+                return;
+            }
+
+            OwnerUpdate();
+        }
+
+        private void OwnerUpdate()
+        {
+            if (!IsOwner)
+            {
+                return;
+            }
+
+            if (InputActionSystemHelper.HasPress(_actions.Player.Attack))
+            {
+                UpdateStateServerRpc(PlayerState.Attack);
+                networkAnimator.SetTrigger(AnimationAttackTrigger);
+                _attackPerformer.PerformAttack(transform.position, _lastMoveVector);
                 return;
             }
 
@@ -109,13 +145,31 @@ namespace Player
                 return state;
             }
 
-            var sprintPhase = _actions.Player.Sprint.phase;
-            if (sprintPhase is InputActionPhase.Performed or InputActionPhase.Started)
+            if (InputActionSystemHelper.HasPress(_actions.Player.Sprint))
             {
                 state = PlayerState.Run;
             }
 
             return state;
+        }
+
+        // 공격 애니메이션 종료
+        private void OnAttackAnimationFinished()
+        {
+            if (!IsOwner)
+            {
+                return;
+            }
+
+            if (_currentState.Value != PlayerState.Attack)
+            {
+                return;
+            }
+
+            // idle상태로 되돌림
+            const PlayerState newState = PlayerState.Idle;
+            ApplyStateToAnimation(_currentState.Value, newState);
+            UpdateStateServerRpc(newState);
         }
 
         [ServerRpc]
@@ -138,26 +192,32 @@ namespace Player
         {
             Debug.Log($"[ID:{OwnerClientId}] character apply state to animation : {previousState} => {state}");
 
-            if (animator == null) return;
-            animator.SetBool(AnimationMoving, state is PlayerState.Walk or PlayerState.Run);
+            CharacterAnimationView.Animator.SetBool(AnimationMoving, state is PlayerState.Walk or PlayerState.Run);
         }
+
+        private Vector3 _lastMoveVector;
 
         // 이동 방향을 감지하여 애니메이션 갱신
         private void ApplyDirectionToAnimation()
         {
-            if (animator == null) return;
-
             var moveVector = (transform.localPosition - _previousPosition).normalized;
             if (moveVector == Vector3.zero) return;
 
+            _lastMoveVector = moveVector;
             _previousPosition = transform.localPosition;
-            DirectionAnimationSetAs(moveVector.x, moveVector.y);
+            DirectionAnimationSetAs(_lastMoveVector.x, _lastMoveVector.y);
         }
 
         private void DirectionAnimationSetAs(float x, float y)
         {
-            animator.SetFloat(AnimationX, x);
-            animator.SetFloat(AnimationY, y);
+            CharacterAnimationView.Animator.SetFloat(AnimationX, x);
+            CharacterAnimationView.Animator.SetFloat(AnimationY, y);
+        }
+
+        private void OnDrawGizmosSelected()
+        {
+            Gizmos.color = Color.red;
+            Gizmos.DrawWireCube(_attackPerformer.Position, _attackPerformer.AttackSize);
         }
     }
 }
